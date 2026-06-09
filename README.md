@@ -28,7 +28,7 @@ python parser_wiki.py
 cat >> README.md << 'EOF'
 
 ## Автор
-[Ваше имя]
+[Шамил Шамилов]
 
 ## Ссылка на репозиторий
 https://github.com/shamilovshamil793-wq/vacancy_parser
