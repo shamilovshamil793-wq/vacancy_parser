@@ -2,15 +2,9 @@ import json
 import time
 import requests
 from bs4 import BeautifulSoup
-from fake_useragent import UserAgent
-
-DELAY = 1.5
-
-def get_random_headers():
-    ua = UserAgent()
-    return {"User-Agent": ua.random}
 
 def parse_vacancies(keyword="тестировщик Python", pages=3):
+    """Парсит вакансии с hh.ru"""
     all_vacancies = []
     
     for page in range(pages):
@@ -23,36 +17,58 @@ def parse_vacancies(keyword="тестировщик Python", pages=3):
             "area": 113
         }
         
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+        }
+        
         try:
-            response = requests.get(url, headers=get_random_headers(), params=params, timeout=10)
+            response = requests.get(url, headers=headers, params=params, timeout=10)
             response.raise_for_status()
-        except requests.RequestException as e:
-            print(f"Ошибка при запросе: {e}")
+        except Exception as e:
+            print(f"Ошибка запроса: {e}")
             break
         
         soup = BeautifulSoup(response.text, "html.parser")
-        vacancy_cards = soup.find_all("div", class_="vacancy-card--z_UXteNo7bRGzxWVcL7y")
+        
+        # Новые селекторы для hh.ru (актуальные)
+        vacancy_cards = soup.find_all("div", {"data-qa": "vacancy-serp__vacancy"})
         
         if not vacancy_cards:
+            # Альтернативный поиск
             vacancy_cards = soup.find_all("div", class_="serp-item")
         
         if not vacancy_cards:
-            print("Не удалось найти карточки вакансий.")
-            break
+            print(f"Не найдено карточек на странице {page + 1}")
+            continue
+        
+        print(f"Найдено {len(vacancy_cards)} вакансий на странице")
         
         for card in vacancy_cards:
             try:
-                title_tag = card.find("a", class_="bloko-link")
-                title = title_tag.text.strip() if title_tag else "Без названия"
+                # Название и ссылка
+                title_tag = card.find("a", {"data-qa": "vacancy-serp__vacancy-title"})
+                if not title_tag:
+                    title_tag = card.find("a", class_="serp-item__title")
+                
+                title = title_tag.text.strip() if title_tag else "Не указано"
                 link = title_tag["href"] if title_tag and title_tag.get("href") else ""
                 
-                salary_tag = card.find("span", class_="fake-magister-primary-text")
+                # Зарплата
+                salary_tag = card.find("span", {"data-qa": "vacancy-serp__vacancy-compensation"})
+                if not salary_tag:
+                    salary_tag = card.find("span", class_="fake-magister-primary-text")
                 salary = salary_tag.text.strip() if salary_tag else "Не указана"
                 
-                company_tag = card.find("span", class_="company-name-text")
+                # Компания
+                company_tag = card.find("a", {"data-qa": "vacancy-serp__vacancy-employer"})
+                if not company_tag:
+                    company_tag = card.find("div", class_="vacancy-serp-item__meta-info-company")
                 company = company_tag.text.strip() if company_tag else "Не указана"
                 
+                # Город
                 city_tag = card.find("span", {"data-qa": "vacancy-serp__vacancy-address"})
+                if not city_tag:
+                    city_tag = card.find("div", {"data-qa": "vacancy-serp__vacancy-address"})
                 city = city_tag.text.strip() if city_tag else "Не указан"
                 
                 all_vacancies.append({
@@ -62,36 +78,43 @@ def parse_vacancies(keyword="тестировщик Python", pages=3):
                     "salary": salary,
                     "link": link
                 })
+                
             except Exception as e:
-                print(f"Ошибка парсинга: {e}")
+                print(f"Ошибка при парсинге карточки: {e}")
                 continue
         
-        time.sleep(DELAY)
+        time.sleep(1)  # Пауза между страницами
     
     return all_vacancies
 
 def save_to_json(data, filename="result.json"):
+    """Сохраняет результат в JSON"""
+    if not data:
+        print("Нет данных для сохранения")
+        return
+    
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-    print(f"Сохранено {len(data)} вакансий в {filename}")
+    print(f"\n✅ Сохранено {len(data)} вакансий в {filename}")
 
 def main():
     print("Старт парсинга...")
-    keyword = input("Введите ключевое слово (или Enter для 'тестировщик Python'): ").strip()
+    
+    keyword = input("Введите ключевое слово (Enter = 'тестировщик Python'): ").strip()
     if not keyword:
         keyword = "тестировщик Python"
     
-    pages = input("Введите количество страниц (по умолчанию 3): ").strip()
-    pages = int(pages) if pages.isdigit() else 3
+    pages_input = input("Введите количество страниц (Enter = 3): ").strip()
+    pages = int(pages_input) if pages_input.isdigit() else 3
     
     vacancies = parse_vacancies(keyword, pages)
     
     if vacancies:
         save_to_json(vacancies)
-        print("\nПример найденной вакансии:")
+        print("\n📌 Пример первой вакансии:")
         print(json.dumps(vacancies[0], ensure_ascii=False, indent=2))
     else:
-        print("Вакансии не найдены.")
+        print("❌ Вакансии не найдены. Попробуйте другое ключевое слово.")
 
 if __name__ == "__main__":
     main()
