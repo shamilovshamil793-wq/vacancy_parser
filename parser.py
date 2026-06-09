@@ -1,89 +1,84 @@
 import json
 import time
 import requests
-from bs4 import BeautifulSoup
 
-def parse_vacancies(keyword="тестировщик Python", pages=3):
-    """Парсит вакансии с hh.ru"""
+def parse_vacancies_api(keyword="тестировщик Python", pages=3):
+    """
+    Парсит вакансии через официальное API hh.ru
+    Документация: https://github.com/hhru/api
+    """
     all_vacancies = []
     
     for page in range(pages):
         print(f"Парсинг страницы {page + 1}...")
         
-        url = "https://hh.ru/search/vacancy"
+        url = "https://api.hh.ru/vacancies"
         params = {
             "text": keyword,
+            "area": 113,  # 113 = Россия
             "page": page,
-            "area": 113
+            "per_page": 20
         }
         
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         
         try:
             response = requests.get(url, headers=headers, params=params, timeout=10)
             response.raise_for_status()
+            data = response.json()
         except Exception as e:
-            print(f"Ошибка запроса: {e}")
+            print(f"Ошибка запроса к API: {e}")
             break
         
-        soup = BeautifulSoup(response.text, "html.parser")
+        vacancies = data.get("items", [])
         
-        # Новые селекторы для hh.ru (актуальные)
-        vacancy_cards = soup.find_all("div", {"data-qa": "vacancy-serp__vacancy"})
+        if not vacancies:
+            print(f"Вакансии не найдены на странице {page + 1}")
+            break
         
-        if not vacancy_cards:
-            # Альтернативный поиск
-            vacancy_cards = soup.find_all("div", class_="serp-item")
+        print(f"Найдено {len(vacancies)} вакансий")
         
-        if not vacancy_cards:
-            print(f"Не найдено карточек на странице {page + 1}")
-            continue
+        for item in vacancies:
+            # Получаем название компании
+            company = "Не указана"
+            if item.get("employer"):
+                company = item["employer"].get("name", "Не указана")
+            
+            # Получаем зарплату
+            salary_raw = item.get("salary")
+            if salary_raw:
+                salary_from = salary_raw.get("from", "")
+                salary_to = salary_raw.get("to", "")
+                currency = salary_raw.get("currency", "")
+                if salary_from and salary_to:
+                    salary = f"{salary_from} - {salary_to} {currency}"
+                elif salary_from:
+                    salary = f"от {salary_from} {currency}"
+                elif salary_to:
+                    salary = f"до {salary_to} {currency}"
+                else:
+                    salary = "Не указана"
+            else:
+                salary = "Не указана"
+            
+            # Город
+            city = "Не указан"
+            if item.get("area"):
+                city = item["area"].get("name", "Не указан")
+            
+            all_vacancies.append({
+                "title": item.get("name", "Не указано"),
+                "company": company,
+                "city": city,
+                "salary": salary,
+                "link": item.get("alternate_url", ""),
+                "requirement": item.get("snippet", {}).get("requirement", "").replace("&quot;", '"').replace("&amp;", "&"),
+                "responsibility": item.get("snippet", {}).get("responsibility", "").replace("&quot;", '"').replace("&amp;", "&")
+            })
         
-        print(f"Найдено {len(vacancy_cards)} вакансий на странице")
-        
-        for card in vacancy_cards:
-            try:
-                # Название и ссылка
-                title_tag = card.find("a", {"data-qa": "vacancy-serp__vacancy-title"})
-                if not title_tag:
-                    title_tag = card.find("a", class_="serp-item__title")
-                
-                title = title_tag.text.strip() if title_tag else "Не указано"
-                link = title_tag["href"] if title_tag and title_tag.get("href") else ""
-                
-                # Зарплата
-                salary_tag = card.find("span", {"data-qa": "vacancy-serp__vacancy-compensation"})
-                if not salary_tag:
-                    salary_tag = card.find("span", class_="fake-magister-primary-text")
-                salary = salary_tag.text.strip() if salary_tag else "Не указана"
-                
-                # Компания
-                company_tag = card.find("a", {"data-qa": "vacancy-serp__vacancy-employer"})
-                if not company_tag:
-                    company_tag = card.find("div", class_="vacancy-serp-item__meta-info-company")
-                company = company_tag.text.strip() if company_tag else "Не указана"
-                
-                # Город
-                city_tag = card.find("span", {"data-qa": "vacancy-serp__vacancy-address"})
-                if not city_tag:
-                    city_tag = card.find("div", {"data-qa": "vacancy-serp__vacancy-address"})
-                city = city_tag.text.strip() if city_tag else "Не указан"
-                
-                all_vacancies.append({
-                    "title": title,
-                    "company": company,
-                    "city": city,
-                    "salary": salary,
-                    "link": link
-                })
-                
-            except Exception as e:
-                print(f"Ошибка при парсинге карточки: {e}")
-                continue
-        
-        time.sleep(1)  # Пауза между страницами
+        time.sleep(0.5)  # Небольшая пауза между запросами
     
     return all_vacancies
 
@@ -91,28 +86,58 @@ def save_to_json(data, filename="result.json"):
     """Сохраняет результат в JSON"""
     if not data:
         print("Нет данных для сохранения")
-        return
+        return False
     
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-    print(f"\n✅ Сохранено {len(data)} вакансий в {filename}")
+    return True
+
+def save_to_csv(data, filename="result.csv"):
+    """Сохраняет результат в CSV (удобно для Excel)"""
+    if not data:
+        return
+    
+    import csv
+    with open(filename, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["title", "company", "city", "salary", "link", "requirement", "responsibility"])
+        writer.writeheader()
+        writer.writerows(data)
+    print(f"✅ CSV сохранён: {filename}")
 
 def main():
-    print("Старт парсинга...")
+    print("=" * 50)
+    print("Парсер вакансий hh.ru (через официальное API)")
+    print("=" * 50)
     
     keyword = input("Введите ключевое слово (Enter = 'тестировщик Python'): ").strip()
     if not keyword:
         keyword = "тестировщик Python"
     
-    pages_input = input("Введите количество страниц (Enter = 3): ").strip()
+    pages_input = input("Введите количество страниц (Enter = 3, одна страница = 20 вакансий): ").strip()
     pages = int(pages_input) if pages_input.isdigit() else 3
     
-    vacancies = parse_vacancies(keyword, pages)
+    print(f"\n🔍 Ищем '{keyword}'...\n")
+    
+    vacancies = parse_vacancies_api(keyword, pages)
     
     if vacancies:
+        # Сохраняем в JSON
         save_to_json(vacancies)
-        print("\n📌 Пример первой вакансии:")
-        print(json.dumps(vacancies[0], ensure_ascii=False, indent=2))
+        print(f"✅ JSON сохранён: result.json ({len(vacancies)} вакансий)")
+        
+        # Сохраняем в CSV
+        save_to_csv(vacancies)
+        
+        print("\n" + "=" * 50)
+        print("📌 Пример первой вакансии:")
+        print("=" * 50)
+        print(f"Название: {vacancies[0]['title']}")
+        print(f"Компания: {vacancies[0]['company']}")
+        print(f"Город: {vacancies[0]['city']}")
+        print(f"Зарплата: {vacancies[0]['salary']}")
+        print(f"Ссылка: {vacancies[0]['link']}")
+        if vacancies[0]['requirement']:
+            print(f"Требования: {vacancies[0]['requirement'][:200]}...")
     else:
         print("❌ Вакансии не найдены. Попробуйте другое ключевое слово.")
 
